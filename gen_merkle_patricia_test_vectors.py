@@ -2,13 +2,20 @@
 """Generate test vectors for the Merkle Patricia Tree spec."""
 
 import hashlib
+import itertools
 import json
 import base64
 import random
+import sys
 
 SEED = b"waict-v1-mpt-kats"
-OUT_FILENAME = "merkle_patricia_vectors.jsonl"
+ROOT_KAT_FILENAME = "mpt_root_kats.jsonl"
+INCLUSION_KAT_FILENAME = "mpt_inclusion_kats.jsonl"
 
+
+# ---------------------------------------------------------------------------
+# Core MPT primitives
+# ---------------------------------------------------------------------------
 
 def sha256(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
@@ -63,13 +70,8 @@ def similarity(n: InteriorNode, m: InteriorNode) -> int:
     return result
 
 
-def mpt_prime(nodes: list) -> bytes:
-    if len(nodes) == 0:
-        return sha256(b"")
-    if len(nodes) == 1:
-        return nodes[0].hash
-
-    # Find pair with maximum similarity
+def find_max_similarity_pair(nodes: list) -> tuple:
+    """Find indices i < j that maximize Similarity(nodes[i], nodes[j])."""
     best_sim = -1
     best_i, best_j = -1, -1
     for i in range(len(nodes)):
@@ -78,30 +80,63 @@ def mpt_prime(nodes: list) -> bytes:
             if s > best_sim:
                 best_sim = s
                 best_i, best_j = i, j
+    return best_i, best_j, best_sim
 
-    ni, nj = nodes[best_i], nodes[best_j]
-    r = best_sim
 
+def merge_nodes(ni: InteriorNode, nj: InteriorNode, r: int) -> InteriorNode:
+    """Merge two interior nodes at similarity r into a parent node."""
     prefix_new = prefix_truncate(ni.prefix, r)
-
     if ni.prefix <= nj.prefix:
         children_hashes = ni.hash + nj.hash
     else:
         children_hashes = nj.hash + ni.hash
-
     hash_new = sha256(b"\x01" + bytes([r]) + prefix_new + children_hashes)
-    n_new = InteriorNode(prefix=prefix_new, prefix_len=r, hash_val=hash_new)
-
-    new_nodes = [node for idx, node in enumerate(nodes) if idx not in (best_i, best_j)]
-    new_nodes.append(n_new)
-
-    return mpt_prime(new_nodes)
+    return InteriorNode(prefix=prefix_new, prefix_len=r, hash_val=hash_new)
 
 
-def mpt(pairs: list) -> bytes:
-    nodes = [to_interior(k, v) for k, v in pairs]
-    return mpt_prime(nodes)
+# ---------------------------------------------------------------------------
+# Combined root + inclusion proof (over a list, with a target index)
+# ---------------------------------------------------------------------------
 
+def compute_root_and_inclusion(target_idx: int, nodes: list) -> tuple:
+    """
+    Compute the MPT root hash and inclusion proof for nodes[target_idx].
+    target_idx is 0-indexed.
+    Returns (proof_bytes, root_hash).
+    """
+    assert len(nodes) > 0, "cannot prove inclusion in an empty list"
+    if len(nodes) == 1:
+        return (b"", nodes[0].hash)
+
+    # Same global merge as MPT'
+    best_i, best_j, r = find_max_similarity_pair(nodes)
+    ni, nj = nodes[best_i], nodes[best_j]
+    n_new = merge_nodes(ni, nj, r)
+
+    # Build L': replace best_i with n', remove best_j
+    new_nodes = list(nodes)
+    new_nodes[best_i] = n_new
+    new_nodes.pop(best_j)
+
+    # Emit proof segment if the target is part of this merge
+    if target_idx == best_i or target_idx == best_j:
+        nk = nodes[target_idx]
+        h_idx = best_j if target_idx == best_i else best_i
+        nh = nodes[h_idx]
+        is_left = nk.prefix <= nh.prefix
+        proof_segment = bytes([int(is_left)]) + bytes([r]) + nh.hash
+        new_target = best_i
+    else:
+        proof_segment = b""
+        new_target = target_idx if target_idx < best_j else target_idx - 1
+
+    rest_proof, root = compute_root_and_inclusion(new_target, new_nodes)
+    return (proof_segment + rest_proof, root)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
@@ -124,7 +159,111 @@ def set_bit(data: bytes, i: int, val: int) -> bytes:
     return bytes(ba)
 
 
-def make_test_vector(pairs: list, label: str) -> dict:
+# ---------------------------------------------------------------------------
+# Property tests
+# ---------------------------------------------------------------------------
+
+def mpt(pairs: list) -> bytes:
+    """Compute the MPT root hash for a set of key-value pairs."""
+    if len(pairs) == 0:
+        return sha256(b"")
+    nodes = [to_interior(k, v) for k, v in pairs]
+    _, root = compute_root_and_inclusion(0, nodes)
+    return root
+
+
+def test_root_matches(pairs: list):
+    """Verify compute_root_and_inclusion produces the same root for every target index."""
+    if len(pairs) == 0:
+        return
+    nodes = [to_interior(k, v) for k, v in pairs]
+    _, expected_root = compute_root_and_inclusion(0, list(nodes))
+    for idx in range(1, len(pairs)):
+        _, root = compute_root_and_inclusion(idx, list(nodes))
+        assert root == expected_root, (
+            f"root mismatch for target {idx}: "
+            f"{root.hex()} != {expected_root.hex()}"
+        )
+
+
+def test_permutation_invariance(pairs: list, rng: random.Random, num_perms: int = 20):
+    """
+    Verify that compute_root_and_inclusion(k, L) produces identical (proof, root)
+    regardless of where nk sits in L and how the rest of L is permuted.
+    """
+    if len(pairs) <= 1:
+        return
+
+    nodes = [to_interior(k, v) for k, v in pairs]
+
+    # For each element, compute reference proof in the canonical order
+    refs = {}
+    for idx in range(len(pairs)):
+        proof, root = compute_root_and_inclusion(idx, list(nodes))
+        refs[idx] = (proof, root)
+
+    # Try random permutations
+    indices = list(range(len(pairs)))
+    for _ in range(num_perms):
+        perm = list(indices)
+        rng.shuffle(perm)
+        perm_nodes = [nodes[p] for p in perm]
+
+        for orig_idx in range(len(pairs)):
+            new_idx = perm.index(orig_idx)
+            proof, root = compute_root_and_inclusion(new_idx, list(perm_nodes))
+            ref_proof, ref_root = refs[orig_idx]
+            assert root == ref_root, (
+                f"root differs under permutation for element {orig_idx}"
+            )
+            assert proof == ref_proof, (
+                f"proof differs under permutation for element {orig_idx}"
+            )
+
+    # For small lists, also try all permutations exhaustively
+    if len(pairs) <= 6:
+        for perm in itertools.permutations(indices):
+            perm = list(perm)
+            perm_nodes = [nodes[p] for p in perm]
+            for orig_idx in range(len(pairs)):
+                new_idx = perm.index(orig_idx)
+                proof, root = compute_root_and_inclusion(new_idx, list(perm_nodes))
+                ref_proof, ref_root = refs[orig_idx]
+                assert root == ref_root, (
+                    f"root differs under permutation {perm} for element {orig_idx}"
+                )
+                assert proof == ref_proof, (
+                    f"proof differs under permutation {perm} for element {orig_idx}"
+                )
+
+
+def run_property_tests():
+    """Run property tests before generating test vectors."""
+    print("Running property tests...")
+    rng = random.Random(b"mpt-property-tests")
+
+    # Fixed small cases
+    for size in range(1, 7):
+        pairs = [(random_bytestring(rng), random_bytestring(rng)) for _ in range(size)]
+        test_root_matches(pairs)
+        test_permutation_invariance(pairs, rng)
+        print(f"  size {size}: root + permutation invariance OK")
+
+    # Larger random cases (random permutations only, not exhaustive)
+    for size in [8, 10, 14, 16]:
+        pairs = [(random_bytestring(rng), random_bytestring(rng)) for _ in range(size)]
+        test_root_matches(pairs)
+        test_permutation_invariance(pairs, rng, num_perms=30)
+        print(f"  size {size}: root + permutation invariance OK")
+
+    print("All property tests passed.")
+
+
+# ---------------------------------------------------------------------------
+# Test vector construction
+# ---------------------------------------------------------------------------
+
+def make_root_vector(pairs: list, label: str) -> dict:
     root = mpt(pairs)
     return {
         "label": label,
@@ -133,83 +272,113 @@ def make_test_vector(pairs: list, label: str) -> dict:
     }
 
 
-def main():
-    rng = random.Random(SEED)
-    vectors = []
+def make_inclusion_vector(pairs: list, target_idx: int, label: str) -> dict:
+    nodes = [to_interior(k, v) for k, v in pairs]
+    proof, root = compute_root_and_inclusion(target_idx, nodes)
+    return {
+        "label": label,
+        "root": b64(root),
+        "list": [{"key": b64(k), "value": b64(v)} for k, v in pairs],
+        "target_index": target_idx,
+        "proof": b64(proof),
+    }
 
-    # --- Random sets of sizes 0..=16 ---
-    for size in range(17):
-        pairs = [(random_bytestring(rng), random_bytestring(rng)) for _ in range(size)]
-        vectors.append(make_test_vector(pairs, f"random_size_{size}"))
 
-    # --- Edge case: two keys differing only at the last bit (bit 255) ---
+def build_edge_case_pairs(rng: random.Random) -> list:
+    """Return a list of (label, pairs) for edge-case sets."""
+    cases = []
+
+    # Two keys differing only at the last bit (bit 255)
     k0 = random_bytestring(rng)
     v0 = random_bytestring(rng)
     k1 = set_bit(k0, 255, 1 - bit_at(k0, 255))
     v1 = random_bytestring(rng)
-    vectors.append(make_test_vector([(k0, v0), (k1, v1)], "differ_last_bit"))
+    cases.append(("differ_last_bit", [(k0, v0), (k1, v1)]))
 
-    # --- Edge case: two keys differing only at the first bit (bit 0) ---
+    # Two keys differing only at the first bit (bit 0)
     k0 = random_bytestring(rng)
     v0 = random_bytestring(rng)
     k1 = set_bit(k0, 0, 1 - bit_at(k0, 0))
     v1 = random_bytestring(rng)
-    vectors.append(make_test_vector([(k0, v0), (k1, v1)], "differ_first_bit"))
+    cases.append(("differ_first_bit", [(k0, v0), (k1, v1)]))
 
-    # --- Edge case: 8 keys sharing 250-bit common prefix ---
+    # 8 keys sharing 250-bit common prefix
     base_key = random_bytestring(rng)
     pairs = []
     for i in range(8):
-        k = bytearray(base_key)
-        # Write bits 250..257 with the value i (3 bits), rest stays as base
-        # We set bits 250, 251, 252 to the 3-bit encoding of i
-        k = bytes(k)
+        k = bytes(bytearray(base_key))
         for bit_pos in range(3):
             k = set_bit(k, 250 + bit_pos, (i >> (2 - bit_pos)) & 1)
         v = random_bytestring(rng)
         pairs.append((k, v))
-    vectors.append(make_test_vector(pairs, "long_common_prefix_250bits"))
+    cases.append(("long_common_prefix_250bits", pairs))
 
-    # --- Edge case: tie scenario ---
-    # 4 keys: 00..., 01..., 10..., 11... (differ at bit 1 within each pair)
-    # Pairs (k0,k1) and (k2,k3) both have similarity = bit where they first differ
+    # Tie scenario: 4 keys where two disjoint pairs tie for max similarity
     base = random_bytestring(rng)
-    # Zero out the first 2 bits, then construct 4 keys
     base = set_bit(base, 0, 0)
     base = set_bit(base, 1, 0)
     k00 = set_bit(set_bit(base, 0, 0), 1, 0)
     k01 = set_bit(set_bit(base, 0, 0), 1, 1)
     k10 = set_bit(set_bit(base, 0, 1), 1, 0)
     k11 = set_bit(set_bit(base, 0, 1), 1, 1)
-    # Make remaining bits unique so keys are distinct beyond bit 1
-    # They already differ at bits 0-1, and share all other bits from base.
-    # Similarity: (k00,k01)=1, (k10,k11)=1, cross-pairs=0. Tie at max sim=1.
     pairs = [
         (k00, random_bytestring(rng)),
         (k01, random_bytestring(rng)),
         (k10, random_bytestring(rng)),
         (k11, random_bytestring(rng)),
     ]
-    vectors.append(make_test_vector(pairs, "tie_max_similarity"))
+    cases.append(("tie_max_similarity", pairs))
 
-    # --- Edge case: all-zeros key and value ---
+    # All-zeros key and value
     z = b"\x00" * 32
-    vectors.append(make_test_vector([(z, z)], "all_zeros"))
+    cases.append(("all_zeros", [(z, z)]))
 
-    # --- Edge case: all-ones key and value ---
+    # All-ones key and value
     ones = b"\xff" * 32
-    vectors.append(make_test_vector([(ones, ones)], "all_ones"))
+    cases.append(("all_ones", [(ones, ones)]))
 
-    # --- Edge case: all-zeros vs all-ones (differ at bit 0, max distance) ---
-    vectors.append(
-        make_test_vector([(z, z), (ones, ones)], "zeros_and_ones")
-    )
+    # All-zeros vs all-ones
+    cases.append(("zeros_and_ones", [(z, z), (ones, ones)]))
 
-    with open(OUT_FILENAME, "w") as f:
-        for vec in vectors:
+    return cases
+
+
+def main():
+    run_property_tests()
+
+    rng = random.Random(SEED)
+    root_vectors = []
+    inclusion_vectors = []
+
+    # --- Random sets of sizes 0..=16 ---
+    for size in range(17):
+        pairs = [(random_bytestring(rng), random_bytestring(rng)) for _ in range(size)]
+        root_vectors.append(make_root_vector(pairs, f"random_size_{size}"))
+        if size > 0:
+            target = rng.randint(0, size - 1)
+            inclusion_vectors.append(
+                make_inclusion_vector(pairs, target, f"random_size_{size}_idx{target}")
+            )
+
+    # --- Edge cases ---
+    for label, pairs in build_edge_case_pairs(rng):
+        root_vectors.append(make_root_vector(pairs, label))
+        # Generate an inclusion proof for every element in edge-case sets
+        for idx in range(len(pairs)):
+            inclusion_vectors.append(
+                make_inclusion_vector(pairs, idx, f"{label}_idx{idx}")
+            )
+
+    # --- Write output ---
+    with open(ROOT_KAT_FILENAME, "w") as f:
+        for vec in root_vectors:
             f.write(json.dumps(vec) + "\n")
+    print(f"Wrote {len(root_vectors)} root test vectors to {ROOT_KAT_FILENAME}")
 
-    print(f"Wrote {len(vectors)} test vectors to {OUT_FILENAME}")
+    with open(INCLUSION_KAT_FILENAME, "w") as f:
+        for vec in inclusion_vectors:
+            f.write(json.dumps(vec) + "\n")
+    print(f"Wrote {len(inclusion_vectors)} inclusion test vectors to {INCLUSION_KAT_FILENAME}")
 
 
 if __name__ == "__main__":

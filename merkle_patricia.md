@@ -100,7 +100,7 @@ Finally we define the top-level function that is given an index and a list of ke
 
     // Precondition: 1 ≤ i ≤ len(L)
     def Inclusion(k, L):
-        return Inclusion(i, L.map(ToInterior))
+        return Inclusion'(i, L.map(ToInterior))
 
 # Non-normative notes
 
