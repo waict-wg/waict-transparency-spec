@@ -23,7 +23,7 @@ For our algorithm, we must map key-value pairs to interior nodes:
 
 We will also need a utility function that measure the "similarity" of two interior nodes. Similarity is defined as the number of leading binary digits the prefixes have in common:
 
-    // Lexicographic similarity between to prefixes.
+    // Lexicographic similarity between two prefixes.
     // Precondition: n and m do not have identical prefixes of length-256
     def Similarity(n: Interior, m: Interior) -> u8:
         let l = min(n.prefix_len, m.prefix_len)
@@ -42,7 +42,7 @@ We define our helper function MPT' over a set of interior nodes as follows:
 
     // Precondition: no two ni, nj have identical prefixes of length-256
     def MPT'(S = {n1, n2, ..., nk}):
-        find an i,j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
+        find indices i ≠ j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
         let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
         let children_hashes = if ni.prefix ≤ nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
         let hash' = H(0x01 || r || prefix' || children_hashes)
@@ -56,9 +56,51 @@ Finally, we define our top-level function:
     def MPT(S = {n1, n2, ..., nk}):
         MPT'(S.map(ToInterior)).
 
-## Proof format
+## Inclusion proof
 
-TODO
+We define the inclusion proof of the k-th element in a list L of interior nodes as follows:
+
+    def Inclusion'(k, []):
+        raise Error("Cannot prove inclusion in an empty list")
+
+    def Inclusion'(1, [n1]):
+        return ""
+
+    // Precondition: 1 ≤ k ≤ N
+    // Precondition: no two ni, nj have identical prefixes of length-256
+    def Inclusion'(k, L = [n1, n2, ..., nN]):
+        find indices i < j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
+
+        // Merge ni and nj into n', just like in MPT'
+        let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
+        let children_hashes = if ni.prefix ≤ nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
+        let hash' = H(0x01 || r || prefix' || children_hashes)
+        let n' = {prefix: prefix', prefix_len: r, hash: hash'}
+        let L' equal L with the i-th element set to n' and the j-th element removed
+
+        // If our target index is being merged, its new sibling is now part of the proof
+        let proof_segment = if i == k || j == k:
+                let h = if i == k: j, else: i // h is the sibling index
+                let is_left = nk.prefix ≤ nh.prefix
+                (is_left as u8) || r || nh.hash
+            else: ""
+
+        // Similarly, compute the new target index
+        let k' = if i == k || j == k:
+                i // We merged ni and nj into n' at index i
+            else if k < j:
+                k
+            else:
+                k - 1
+
+        // Recurse
+        return proof_segment || Inclusion'(k', L')
+
+Finally we define the top-level function that is given an index and a list of key-value pairs:
+
+    // Precondition: 1 ≤ i ≤ len(L)
+    def Inclusion(k, L):
+        return Inclusion(i, L.map(ToInterior))
 
 # Non-normative notes
 
