@@ -22,8 +22,8 @@ def sha256(data: bytes) -> bytes:
 
 
 def bit_at(b: bytes, i: int) -> int:
-    """Get bit i of a 32-byte value, where bit 0 is the leftmost (MSB of byte 0)."""
-    return (b[i // 8] >> (7 - i % 8)) & 1
+    """Get bit i of a 32-byte value, where bit 0 is the LSB of byte 0."""
+    return (b[i // 8] >> (i % 8)) & 1
 
 
 def common_prefix_len(a: bytes, b: bytes, max_len: int) -> int:
@@ -42,7 +42,7 @@ def prefix_truncate(prefix: bytes, r: int) -> bytes:
         result[i] = prefix[i]
     remaining_bits = r % 8
     if remaining_bits > 0 and full_bytes < 32:
-        mask = (0xFF << (8 - remaining_bits)) & 0xFF
+        mask = (1 << remaining_bits) - 1  # keep the lower remaining_bits bits
         result[full_bytes] = prefix[full_bytes] & mask
     return bytes(result)
 
@@ -148,10 +148,10 @@ def random_bytestring(rng: random.Random) -> bytes:
 
 
 def set_bit(data: bytes, i: int, val: int) -> bytes:
-    """Set bit i of a 32-byte value to val (0 or 1)."""
+    """Set bit i of a 32-byte value to val (0 or 1). Bit 0 is the LSB of byte 0."""
     ba = bytearray(data)
     byte_idx = i // 8
-    bit_idx = 7 - i % 8
+    bit_idx = i % 8
     if val:
         ba[byte_idx] |= 1 << bit_idx
     else:
