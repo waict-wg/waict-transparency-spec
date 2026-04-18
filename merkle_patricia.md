@@ -98,9 +98,9 @@ We define the inclusion proof of the `k`-th element in a list `L` of interior no
 
 Finally we define the top-level function that is given an index and a list of key-value pairs:
 
-    // Precondition: 1 ≤ i ≤ len(L)
+    // Precondition: 1 ≤ k ≤ len(L)
     def Inclusion(k, L):
-        return Inclusion'(i, L.map(ToInterior))
+        return Inclusion'(k, L.map(ToInterior))
 
 # Non-normative notes
 
