@@ -1,12 +1,12 @@
 # Merkle Patricia Tree spec
 
-We define the root hash MPT over a set S of key-value pairs (k, v) ∈ 𝔹² where 𝔹 = {0,1}²⁵⁶. We treat an element b ∈ 𝔹 as a bitvector, with b[0] referring to the leftmost bit, and b[..i] referring to the subvector containing all bits from index 0 to and not including i. We use || to mean concatenation. We define H be the SHA256 hash function.
+We define the root hash MPT over a set `S` of key-value pairs `(k, v) ∈ 𝔹²` where `𝔹 = {0,1}²⁵⁶`.  We say `b[..i]` is the subarray containing all bits from index 0 up to and not including index `i`. We use `||` to mean concatenation. We define `H` be the SHA256 hash function. We represent elements of 𝔹 as byte arrays where the leftmost bit of `a: [u8; 32]` is the most significant bit of `a[0]`, and so on.
 
 ## Creating interior nodes
 
 We define interior nodes as having the structure
 
-    struct Interior {
+    struct InteriorNode {
         prefix: 𝔹,
         prefix_len: u16,
         hash: 𝔹,
@@ -15,7 +15,7 @@ We define interior nodes as having the structure
 For our algorithm, we must map key-value pairs to interior nodes:
 
     def ToInterior(k, v):
-        return Interior {
+        return InteriorNode {
             prefix: k,
             prefix_len: 256,
             hash: H(0x00 || k || v)
@@ -25,16 +25,16 @@ We will also need a utility function that measure the "similarity" of two interi
 
     // Lexicographic similarity between two prefixes.
     // Precondition: n and m do not have identical prefixes of length-256
-    def Similarity(n: Interior, m: Interior) -> u8:
+    def Similarity(n: InteriorNode, m: InteriorNode) -> u8:
         let l = min(n.prefix_len, m.prefix_len)
         assert l != 256 or n.prefix != m.prefix
         return (n.prefix[..l] ^ m.prefix[..l]).leading_zeros() as u8
 
-Note our precondition permits us to make the final cast to u8. We ensure in later algorithms that this precondition is enforced.
+Note our precondition permits us to make the final cast to `u8`. We ensure in later algorithms that this precondition is enforced.
 
 ## Defining the root hash
 
-We define our helper function MPT' over a set of interior nodes as follows:
+We define our helper function `MPT'` over a set of interior nodes as follows:
 
     def MPT'({}): return H("")
 
@@ -58,7 +58,7 @@ Finally, we define our top-level function:
 
 ## Inclusion proof
 
-We define the inclusion proof of the k-th element in a list L of interior nodes as follows:
+We define the inclusion proof of the `k`-th element in a list `L` of interior nodes as follows:
 
     def Inclusion'(k, []):
         raise Error("Cannot prove inclusion in an empty list")
@@ -104,10 +104,10 @@ Finally we define the top-level function that is given an index and a list of ke
 
 # Non-normative notes
 
-Note that you can efficiently insert a new entry (k, v) into a tree if you have all the interior nodes that were created in the process of computing MPT':
+Note that you can efficiently insert a new entry `(k, v)` into a tree if you have all the interior nodes that were created in the process of computing `MPT'`:
 
     let S be the set of all nodes that were ever computed in MPT'
     let m = ToInterior(k, v)
     let n be the element of S that maximizes r = Similarity(n, m)
     // if n was a node with a parent (true whenever S is not a singleton), then we kick out the sibling
-    let S' be the subset of S whose prefixes TODO
+    let S' be the subset of S whose prefixes ... TODO
