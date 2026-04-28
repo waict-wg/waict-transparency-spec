@@ -102,6 +102,30 @@ Finally we define the top-level function that is given an index and a list of ke
     def Inclusion(k, L):
         return Inclusion'(k, L.map(ToInterior))
 
+# Known-answer tests
+
+Known-answer tests can be found in `merkle-patricia-tree-tests/`. There are two test files in there.
+
+## Root computation tests
+
+The file `mpt_root_kats.jsonl` has a JSON object on each line. Each object has the following keys:
+* `label` — Represents the name of this test vector
+* `root` — A base64-encoded length-32 bytestring
+* `leaves` — A list containing any number of objects containing `key` and `value`, both base64-encoded length-32 bytestrings
+
+Each test vector has the property that `MPT(leaves) = root`
+
+## Inclusion tests
+
+The file `mpt_inclusion_kats.jsonl` has a JSON object on each line. Each object has the following keys:
+* `label` — Represents the name of this test vector
+* `root` — A base64-encoded length-32 bytestring
+* `proof` — A base64-encoded length-32 bytestring
+* `target_index` — An integer in the range `[0, len(leaves))`
+* `leaves` — A list containing any number of objects containing `key` and `value`, both base64-encoded length-32 bytestrings
+
+Each test vector has the property that `Inclusion(leaves) = proof` and `MPT(leaves) = root`.
+
 # Non-normative notes
 
 Note that you can efficiently insert a new entry `(k, v)` into a tree if you have all the interior nodes that were created in the process of computing `MPT'`:
