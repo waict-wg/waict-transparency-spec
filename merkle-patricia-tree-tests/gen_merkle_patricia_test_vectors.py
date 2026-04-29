@@ -22,8 +22,8 @@ def sha256(data: bytes) -> bytes:
 
 
 def bit_at(b: bytes, i: int) -> int:
-    """Get bit i of a 32-byte value, where bit 0 is the LSB of byte 0."""
-    return (b[i // 8] >> (i % 8)) & 1
+    """Get bit i of a 32-byte value, where bit 0 is the MSB of byte 0."""
+    return (b[i // 8] >> (7 - i % 8)) & 1
 
 
 def common_prefix_len(a: bytes, b: bytes, max_len: int) -> int:
@@ -42,7 +42,7 @@ def prefix_truncate(prefix: bytes, r: int) -> bytes:
         result[i] = prefix[i]
     remaining_bits = r % 8
     if remaining_bits > 0 and full_bytes < 32:
-        mask = (1 << remaining_bits) - 1  # keep the lower remaining_bits bits
+        mask = (0xFF << (8 - remaining_bits)) & 0xFF  # keep the upper remaining_bits bits
         result[full_bytes] = prefix[full_bytes] & mask
     return bytes(result)
 
@@ -86,7 +86,7 @@ def find_max_similarity_pair(nodes: list) -> tuple:
 def merge_nodes(ni: InteriorNode, nj: InteriorNode, r: int) -> InteriorNode:
     """Merge two interior nodes at similarity r into a parent node."""
     prefix_new = prefix_truncate(ni.prefix, r)
-    if ni.prefix <= nj.prefix:
+    if ni.prefix < nj.prefix:
         children_hashes = ni.hash + nj.hash
     else:
         children_hashes = nj.hash + ni.hash
@@ -123,7 +123,7 @@ def compute_root_and_inclusion(target_idx: int, nodes: list) -> tuple:
         nk = nodes[target_idx]
         h_idx = best_j if target_idx == best_i else best_i
         nh = nodes[h_idx]
-        is_left = nk.prefix <= nh.prefix
+        is_left = nk.prefix < nh.prefix
         proof_segment = bytes([int(is_left)]) + bytes([r]) + nh.hash
         new_target = best_i
     else:
@@ -148,10 +148,10 @@ def random_bytestring(rng: random.Random) -> bytes:
 
 
 def set_bit(data: bytes, i: int, val: int) -> bytes:
-    """Set bit i of a 32-byte value to val (0 or 1). Bit 0 is the LSB of byte 0."""
+    """Set bit i of a 32-byte value to val (0 or 1). Bit 0 is the MSB of byte 0."""
     ba = bytearray(data)
     byte_idx = i // 8
-    bit_idx = i % 8
+    bit_idx = 7 - i % 8
     if val:
         ba[byte_idx] |= 1 << bit_idx
     else:

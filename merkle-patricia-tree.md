@@ -1,6 +1,6 @@
 # Merkle Patricia Tree spec
 
-We define the root hash MPT over a set `S` of key-value pairs `(k, v) ∈ 𝔹²` where `𝔹 = {0,1}²⁵⁶`.  We say `b[..i]` is the subarray containing all bits from index 0 up to and not including index `i`. We use `||` to mean concatenation. We define `H` be the SHA256 hash function. We represent elements of 𝔹 as byte arrays where we say the 0-th bit of `a: [u8; 32]` is the least significant bit of `a[0]`, and so on.
+We define the root hash MPT over a set `S` of key-value pairs `(k, v) ∈ 𝔹²` where `𝔹 = {0,1}²⁵⁶`.  We say `b[..i]` is the subarray containing all bits from index 0 up to and not including index `i`. We use `||` to mean concatenation. We define `H` be the SHA256 hash function. We represent elements of 𝔹 as byte arrays where we say the 0-th bit of `a: [u8; 32]` is the most significant bit of `a[0]`, and so on. When `a` and `b` are bit strings, we say `a < b` using the lexicographic ordering. Note this corresponds to the ordering on byte strings, where each byte is compared as an integer until an inequality is found.
 
 ## Creating interior nodes
 
@@ -40,11 +40,11 @@ We define our helper function `MPT'` over a set of interior nodes as follows:
 
     def MPT'({n}): return n.hash
 
-    // Precondition: no two ni, nj have identical prefixes of length-256
+    // Precondition: no two ni, nj have identical prefixes
     def MPT'(S = {n1, n2, ..., nk}):
         find indices i ≠ j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
         let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
-        let children_hashes = if ni.prefix ≤ nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
+        let children_hashes = if ni.prefix < nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
         let hash' = H(0x01 || r || prefix' || children_hashes)
         let n' = {prefix: prefix', prefix_len: r, hash: hash'}
         let S' = S \ {ni, nj} U {n'} // Merge ni and nj into n' (we call this the parent)
@@ -67,13 +67,13 @@ We define the inclusion proof of the `k`-th element in a list `L` of interior no
         return ""
 
     // Precondition: 1 ≤ k ≤ N
-    // Precondition: no two ni, nj have identical prefixes of length-256
+    // Precondition: no two ni, nj have identical prefixes
     def Inclusion'(k, L = [n1, n2, ..., nN]):
         find indices i < j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
 
         // Merge ni and nj into n', just like in MPT'
         let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
-        let children_hashes = if ni.prefix ≤ nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
+        let children_hashes = if ni.prefix < nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
         let hash' = H(0x01 || r || prefix' || children_hashes)
         let n' = {prefix: prefix', prefix_len: r, hash: hash'}
         let L' equal L with the i-th element set to n' and the j-th element removed
@@ -81,7 +81,7 @@ We define the inclusion proof of the `k`-th element in a list `L` of interior no
         // If our target index is being merged, its new sibling is now part of the proof
         let proof_segment = if i == k || j == k:
                 let h = if i == k: j, else: i // h is the sibling index
-                let is_left = nk.prefix ≤ nh.prefix
+                let is_left = nk.prefix < nh.prefix
                 (is_left as u8) || r || nh.hash
             else: ""
 
