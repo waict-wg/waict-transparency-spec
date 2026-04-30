@@ -1,6 +1,6 @@
 # Merkle Patricia Tree spec
 
-We define the root hash MPT over a set `S` of key-value pairs `(k, v) ∈ 𝔹²` where `𝔹 = {0,1}²⁵⁶`.  We say `b[..i]` is the subarray containing all bits from index 0 up to and not including index `i`. We use `||` to mean concatenation. We define `H` be the SHA256 hash function. We represent elements of 𝔹 as byte arrays where we say the 0-th bit of `a: [u8; 32]` is the most significant bit of `a[0]`, and so on. When `a` and `b` are bit strings, we say `a < b` using the lexicographic ordering. Note this corresponds to the ordering on byte strings, where each byte is compared as an integer until an inequality is found.
+We define the root hash MPT over a set `S` of key-value pairs `(k, v) ∈ 𝔹²` where `𝔹 = {0,1}²⁵⁶`.  We say `b[..i]` is the subarray containing all bits from index 0 up to and not including index `i`. We use `||` to mean concatenation. We define `H` be the SHA256 hash function. We represent elements of 𝔹 as byte arrays where we say the 0-th bit of `a: [u8; 32]` is the most significant bit of `a[0]`, and so on. When `a` and `b` are bit strings, we say `a < b` using the lexicographic ordering. Note this corresponds to the ordering on byte strings, where each byte starting at the 0-th is compared as an integer until an inequality is found, with the shorter input being declared less if no inequality is found.
 
 ## Creating interior nodes
 
