@@ -20,7 +20,7 @@ An inclusion proof in a transparency service's tree is of the form:
 ```
 struct {
   EntryWithCtx entry;
-  PrefixProof inc_proof;
+  uint8 inc_proof<1..2^14-1>;
   uint8 signed_prefix_root<1..2^24-1>;
 } WaictInclusionProof;
 ```
