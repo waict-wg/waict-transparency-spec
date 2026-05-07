@@ -16,17 +16,17 @@ We use the Signed Note data structure from the [C2SP signed note standard](https
 
 # Inclusion Proofs
 
-An inclusion proof in a transparency service's tree is of the form:
+A full inclusion proof in a transparency service's tree is of the form:
 ```
 struct {
-  EntryWithCtx entry;
+  ChainNode head;
   uint8 inc_proof<1..2^14-1>;
   uint8 signed_prefix_root<1..2^24-1>;
-} WaictInclusionProof;
+} ChainHeadWithProof;
 ```
 where `signed_prefix_root` is a Signed Note as described in `/upload-cosignature` endpoint in [`waict-apis.md`].
 
-To verify a `WaictInclusionProof` with respect to a leaf key, the verifier:
+To verify a `ChainHeadWithProof` with respect to a leaf key, the verifier:
 
 1. Parses `signed_prefix_root` and extracts the root hash.
 1. Verifies `entry.entry.resource_hash` equals the expected resource hash.
@@ -38,4 +38,4 @@ To verify a `WaictInclusionProof` with respect to a leaf key, the verifier:
 
 We must define a way for the client to get the proof that that a manifest appears in the transparency log.
 
-Suppose a server is enrolled in transparency and serves a manifest with identifier `X` as a source in `Integrity-Policy` or `Integrity-Policy-Report-Only`. The server MUST expose an HTTP GET endpoint `/.well-known/waict/v1/inclusion/<X>`  (recall, identifiers are a nonempty sequence of URL-unreserved characters) that returns an `application/octet-stream` containing a `WaictInclusionProof` for the manifest.
+Suppose a server is enrolled in transparency and serves a manifest with identifier `X` as a source in `Integrity-Policy` or `Integrity-Policy-Report-Only`. The server MUST expose an HTTP GET endpoint `/.well-known/waict/v1/inclusion/<X>`  (recall, identifiers are a nonempty sequence of URL-unreserved characters) that returns an `application/octet-stream` containing a `ChainHeadWithProof` for the manifest.

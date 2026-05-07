@@ -134,17 +134,10 @@ The "New Entry Data" object provides the transparency service with the informati
       "$comment": "URLs of this site's asset hosts"
     }
   },
-  "required": [ "asset_hosts", "resource_hash" ]
+  "required": [ "resource_hash" ]
 }
 ```
-The return value is an `application/octet-stream` containing an `ChainHeadWithProof`, defined as follows:
-```
-struct {
-  ChainNode head;
-  WaictInclusionProof inc_proof;
-} ChainHeadWithProof;
-```
-where `WaictInclusionProof` is from the [WAICT proofs spec](./waict-proofs.md).
+The return value is an `application/octet-stream` containing an `ChainHeadWithProof`, defined in the [WAICT proofs spec](./waict-proofs.md).
 
 The transparency service creates an entry and appends it to the prefix tree. It requires that an entry for the given domain exists. If not, it returns an 400 error. The steps for appending are as follows. The transparency service:
 1. Computes the hash `ah` of the given asset hosts
@@ -153,16 +146,15 @@ The transparency service creates an entry and appends it to the prefix tree. It 
 1. Creates a new `Entry`, `e`, with `time_created` set to the current Unix time in seconds `t`, `resource_hash` set to the decoded given resource hash, `position_in_chain` set to one plus the previous entry's position in the chain, and `asset_hosts_hash` set to `ah`
 1. Sets the value of the leaf equal to an `ChainNode`, with `entry` set to `e`, and `chain_hash` set to `ch`.
 1. Computes a new prefix root given the new leaf
-1. Appends a `TreeEvent` struct to the the sequence of tree events, with `domain` set to the given domain, `new_resource_hash` set to the decoded given resource hash, and `timestamp` set to `t`. If the provided asset hosts are different from the previous asset hosts, `asset_hosts` is set to have enum type `changed` and containing the given asset hosts. Otherwise, `asset_hosts` is set to have enum type `unchanged`.
+1. Appends a `TreeEvent` struct to the the sequence of tree events, with `domain` set to the given domain, `new_resource_hash` set to the decoded given resource hash, and `timestamp` set to `t`. If asset hosts are present in the query, then `asset_hosts` is set to have enum type `changed` and containing the given asset hosts. Otherwise, `asset_hosts` is set to have enum type `unchanged`.
 1. Waits for cosignatures on the new prefix root or a root that came after it
-1. Computes a `WaictInclusionProof` of the latest `ChainNode` associated with `domain` in the newly cosigned prefix tree
-1. Returns an `ChainHeadWithProof`, with `head` set to that `ChainNode` and `inc_proof` set to that inclusion proof.
+1. Returns a `ChainHeadWithProof` with `head` set to the latest `ChainNode` associated with `domain` in the newly cosigned prefix tree, `inc_proof` set to the inclusion proof in that tree, and `signed_prefix_root` set to the signed note for the prefix tree root.
 
 Note well: the `ChainNode` that is returned in the inclusion proof MAY be different from the one that was appended to the prefix tree. This happens if the transparency service received multiple `/append` requests for the same domain within the time it takes to receive new cosignatures. In these cases, the returned `ChainNode` is the one that was appended last.
 
 If the given `resource_hash` is the base64 encoding of `[0x00; 32]`, this is interpreted by the transparency service as unenrolling the site.
 
-So as to not trigger spurious connection connection failures due to timeout, this endpoint SHOULD respond within one minute of receiving a request.
+So as to not trigger spurious connection failures due to timeout, this endpoint SHOULD respond within one minute of receiving a request.
 
 (TODO: this should maybe support arbitrary fast-forward, not just single item appends; note this has to be within reason bc of the linear proof size)
 
