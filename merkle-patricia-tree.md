@@ -2,6 +2,8 @@
 
 We define the root hash MPT over a set `S` of key-value pairs `(k, v) ∈ 𝔹²` where `𝔹 = {0,1}²⁵⁶`.  We say `b[..i]` is the subarray containing all bits from index 0 up to and not including index `i`. We use `||` to mean concatenation. We define `H` be the SHA256 hash function. We represent elements of 𝔹 as byte arrays where we say the 0-th bit of `a: [u8; 32]` is the most significant bit of `a[0]`, and so on. When `a` and `b` are bit strings, we say `a < b` using the lexicographic ordering. Note this corresponds to the ordering on byte strings, where each byte starting at the 0-th is compared as an integer until an inequality is found, with the shorter input being declared less if no inequality is found.
 
+In this spec, we will specify how to compute the root of a Merkle-Patricia Tree, as well as inclusion proofs of elements. The proofs and hashes are intentionally made compatible with the [PATRICIA](https://github.com/rsc/tmp/blob/b6bdb3d0c98a466099207da2af224c10f20544bf/mpt/DESIGN.md) design.
+
 ## Creating interior nodes
 
 We define interior nodes as having the structure
@@ -18,7 +20,7 @@ For our algorithm, we must map key-value pairs to interior nodes:
         return InteriorNode {
             prefix: k,
             prefix_len: 256,
-            hash: H(0x00 || k || v)
+            hash: H(k || v)
         }
 
 We will also need a utility function that measure the "similarity" of two interior nodes. Similarity is defined as the number of leading binary digits the prefixes have in common:
@@ -45,9 +47,9 @@ We define our helper function `MPT'` over a set of interior nodes as follows:
         find indices i ≠ j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
         let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
         let children_hashes = if ni.prefix < nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
-        let hash' = H(0x01 || r || prefix' || children_hashes)
+        let hash' = H(children_hashes || r)
         let n' = {prefix: prefix', prefix_len: r, hash: hash'}
-        let S' = S \ {ni, nj} U {n'} // Merge ni and nj into n' (we call this the parent)
+        let S' = S \ {ni, nj} U {n'} // Merge ni and nj into n'
         return MPT'(S')
 
 Finally, we define our top-level function:
@@ -74,15 +76,14 @@ We define the inclusion proof of the `k`-th element in a list `L` of interior no
         // Merge ni and nj into n', just like in MPT'
         let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
         let children_hashes = if ni.prefix < nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
-        let hash' = H(0x01 || r || prefix' || children_hashes)
+        let hash' = H(children_hashes || r)
         let n' = {prefix: prefix', prefix_len: r, hash: hash'}
         let L' equal L with the i-th element set to n' and the j-th element removed
 
         // If our target index is being merged, its new sibling is now part of the proof
         let proof_segment = if i == k || j == k:
                 let h = if i == k: j, else: i // h is the sibling index
-                let is_left = nk.prefix < nh.prefix
-                (is_left as u8) || r || nh.hash
+                r || nh.hash
             else: ""
 
         // Similarly, compute the new target index
@@ -100,7 +101,10 @@ Finally we define the top-level function that is given an index and a list of ke
 
     // Precondition: 1 ≤ k ≤ len(L)
     def Inclusion(k, L):
-        return Inclusion'(k, L.map(ToInterior))
+        let (_, val) = L[k]
+        return "mptproof" || 0x01 || Inclusion'(k, L.map(ToInterior))
+
+TODO: Specify non-inclusion proofs. Make sure to handle the empty tree case.  
 
 # Known-answer tests
 

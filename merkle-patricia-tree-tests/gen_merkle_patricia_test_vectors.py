@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Generate test vectors for the Merkle Patricia Tree spec."""
 
+import base64
 import hashlib
 import itertools
 import json
-import base64
 import random
 import sys
 
@@ -16,6 +16,7 @@ INCLUSION_KAT_FILENAME = "mpt_inclusion_kats.jsonl"
 # ---------------------------------------------------------------------------
 # Core MPT primitives
 # ---------------------------------------------------------------------------
+
 
 def sha256(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
@@ -42,7 +43,9 @@ def prefix_truncate(prefix: bytes, r: int) -> bytes:
         result[i] = prefix[i]
     remaining_bits = r % 8
     if remaining_bits > 0 and full_bytes < 32:
-        mask = (0xFF << (8 - remaining_bits)) & 0xFF  # keep the upper remaining_bits bits
+        mask = (
+            0xFF << (8 - remaining_bits)
+        ) & 0xFF  # keep the upper remaining_bits bits
         result[full_bytes] = prefix[full_bytes] & mask
     return bytes(result)
 
@@ -58,7 +61,7 @@ def to_interior(k: bytes, v: bytes) -> InteriorNode:
     return InteriorNode(
         prefix=k,
         prefix_len=256,
-        hash_val=sha256(b"\x00" + k + v),
+        hash_val=sha256(k + v),
     )
 
 
@@ -90,7 +93,7 @@ def merge_nodes(ni: InteriorNode, nj: InteriorNode, r: int) -> InteriorNode:
         children_hashes = ni.hash + nj.hash
     else:
         children_hashes = nj.hash + ni.hash
-    hash_new = sha256(b"\x01" + bytes([r]) + prefix_new + children_hashes)
+    hash_new = sha256(children_hashes + bytes([r]))
     return InteriorNode(prefix=prefix_new, prefix_len=r, hash_val=hash_new)
 
 
@@ -98,13 +101,29 @@ def merge_nodes(ni: InteriorNode, nj: InteriorNode, r: int) -> InteriorNode:
 # Combined root + inclusion proof (over a list, with a target index)
 # ---------------------------------------------------------------------------
 
-def compute_root_and_inclusion(target_idx: int, nodes: list) -> tuple:
+
+def compute_root_and_inclusion(target_idx: int, pairs: list) -> tuple:
     """
-    Compute the MPT root hash and inclusion proof for nodes[target_idx].
+    Compute the MPT root hash and inclusion proof for pairs[target_idx].
     target_idx is 0-indexed.
     Returns (proof_bytes, root_hash).
     """
-    assert len(nodes) > 0, "cannot prove inclusion in an empty list"
+    assert len(pairs) > 0, "cannot prove inclusion in an empty list"
+
+    proof_prefix = b"mptproof" + bytes([0x01]) + pairs[target_idx][1]
+
+    nodes = [to_interior(k, v) for k, v in pairs]
+    proof, root = compute_root_and_inclusion_helper(target_idx, nodes)
+    return (proof_prefix + proof, root)
+
+
+def compute_root_and_inclusion_helper(target_idx: int, nodes: list) -> tuple:
+    """
+    Compute the MPT root hash and non-intro portion of inclusion proof for
+    nodes[target_idx].
+    target_idx is 0-indexed.
+    Returns (proof_bytes, root_hash).
+    """
     if len(nodes) == 1:
         return (b"", nodes[0].hash)
 
@@ -130,13 +149,14 @@ def compute_root_and_inclusion(target_idx: int, nodes: list) -> tuple:
         proof_segment = b""
         new_target = target_idx if target_idx < best_j else target_idx - 1
 
-    rest_proof, root = compute_root_and_inclusion(new_target, new_nodes)
+    rest_proof, root = compute_root_and_inclusion_helper(new_target, new_nodes)
     return (proof_segment + rest_proof, root)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
@@ -163,12 +183,12 @@ def set_bit(data: bytes, i: int, val: int) -> bytes:
 # Property tests
 # ---------------------------------------------------------------------------
 
+
 def mpt(pairs: list) -> bytes:
     """Compute the MPT root hash for a set of key-value pairs."""
     if len(pairs) == 0:
         return sha256(b"")
-    nodes = [to_interior(k, v) for k, v in pairs]
-    _, root = compute_root_and_inclusion(0, nodes)
+    _, root = compute_root_and_inclusion(0, pairs)
     return root
 
 
@@ -176,13 +196,11 @@ def test_root_matches(pairs: list):
     """Verify compute_root_and_inclusion produces the same root for every target index."""
     if len(pairs) == 0:
         return
-    nodes = [to_interior(k, v) for k, v in pairs]
-    _, expected_root = compute_root_and_inclusion(0, list(nodes))
+    _, expected_root = compute_root_and_inclusion(0, pairs)
     for idx in range(1, len(pairs)):
-        _, root = compute_root_and_inclusion(idx, list(nodes))
+        _, root = compute_root_and_inclusion(idx, pairs)
         assert root == expected_root, (
-            f"root mismatch for target {idx}: "
-            f"{root.hex()} != {expected_root.hex()}"
+            f"root mismatch for target {idx}: {root.hex()} != {expected_root.hex()}"
         )
 
 
@@ -194,12 +212,10 @@ def test_permutation_invariance(pairs: list, rng: random.Random, num_perms: int 
     if len(pairs) <= 1:
         return
 
-    nodes = [to_interior(k, v) for k, v in pairs]
-
     # For each element, compute reference proof in the canonical order
     refs = {}
     for idx in range(len(pairs)):
-        proof, root = compute_root_and_inclusion(idx, list(nodes))
+        proof, root = compute_root_and_inclusion(idx, pairs)
         refs[idx] = (proof, root)
 
     # Try random permutations
@@ -207,11 +223,11 @@ def test_permutation_invariance(pairs: list, rng: random.Random, num_perms: int 
     for _ in range(num_perms):
         perm = list(indices)
         rng.shuffle(perm)
-        perm_nodes = [nodes[p] for p in perm]
+        perm_pairs = [pairs[p] for p in perm]
 
         for orig_idx in range(len(pairs)):
             new_idx = perm.index(orig_idx)
-            proof, root = compute_root_and_inclusion(new_idx, list(perm_nodes))
+            proof, root = compute_root_and_inclusion(new_idx, list(perm_pairs))
             ref_proof, ref_root = refs[orig_idx]
             assert root == ref_root, (
                 f"root differs under permutation for element {orig_idx}"
@@ -224,10 +240,10 @@ def test_permutation_invariance(pairs: list, rng: random.Random, num_perms: int 
     if len(pairs) <= 6:
         for perm in itertools.permutations(indices):
             perm = list(perm)
-            perm_nodes = [nodes[p] for p in perm]
+            perm_pairs = [pairs[p] for p in perm]
             for orig_idx in range(len(pairs)):
                 new_idx = perm.index(orig_idx)
-                proof, root = compute_root_and_inclusion(new_idx, list(perm_nodes))
+                proof, root = compute_root_and_inclusion(new_idx, list(perm_pairs))
                 ref_proof, ref_root = refs[orig_idx]
                 assert root == ref_root, (
                     f"root differs under permutation {perm} for element {orig_idx}"
@@ -263,6 +279,7 @@ def run_property_tests():
 # Test vector construction
 # ---------------------------------------------------------------------------
 
+
 def make_root_vector(pairs: list, label: str) -> dict:
     root = mpt(pairs)
     return {
@@ -273,8 +290,7 @@ def make_root_vector(pairs: list, label: str) -> dict:
 
 
 def make_inclusion_vector(pairs: list, target_idx: int, label: str) -> dict:
-    nodes = [to_interior(k, v) for k, v in pairs]
-    proof, root = compute_root_and_inclusion(target_idx, nodes)
+    proof, root = compute_root_and_inclusion(target_idx, pairs)
     return {
         "label": label,
         "root": b64(root),
@@ -378,7 +394,9 @@ def main():
     with open(INCLUSION_KAT_FILENAME, "w") as f:
         for vec in inclusion_vectors:
             f.write(json.dumps(vec) + "\n")
-    print(f"Wrote {len(inclusion_vectors)} inclusion test vectors to {INCLUSION_KAT_FILENAME}")
+    print(
+        f"Wrote {len(inclusion_vectors)} inclusion test vectors to {INCLUSION_KAT_FILENAME}"
+    )
 
 
 if __name__ == "__main__":
