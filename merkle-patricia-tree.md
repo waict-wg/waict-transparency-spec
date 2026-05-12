@@ -102,7 +102,7 @@ Finally we define the top-level function that is given an index and a list of ke
     // Precondition: 1 ≤ k ≤ len(L)
     def Inclusion(k, L):
         let (_, val) = L[k]
-        return "mptproof" || 0x01 || Inclusion'(k, L.map(ToInterior))
+        return "mptproof" || 0x01 || val || Inclusion'(k, L.map(ToInterior))
 
 TODO: Specify non-inclusion proofs. Make sure to handle the empty tree case.  
 

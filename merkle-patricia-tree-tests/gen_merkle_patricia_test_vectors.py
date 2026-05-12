@@ -139,11 +139,9 @@ def compute_root_and_inclusion_helper(target_idx: int, nodes: list) -> tuple:
 
     # Emit proof segment if the target is part of this merge
     if target_idx == best_i or target_idx == best_j:
-        nk = nodes[target_idx]
         h_idx = best_j if target_idx == best_i else best_i
         nh = nodes[h_idx]
-        is_left = nk.prefix < nh.prefix
-        proof_segment = bytes([int(is_left)]) + bytes([r]) + nh.hash
+        proof_segment = bytes([r]) + nh.hash
         new_target = best_i
     else:
         proof_segment = b""
