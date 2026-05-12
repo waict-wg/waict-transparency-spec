@@ -2,7 +2,7 @@
 
 We define the root hash MPT over a set `S` of key-value pairs `(k, v) ∈ 𝔹²` where `𝔹 = {0,1}²⁵⁶`.  We say `b[..i]` is the subarray containing all bits from index 0 up to and not including index `i`. We use `||` to mean concatenation. We define `H` be the SHA256 hash function. We represent elements of 𝔹 as byte arrays where we say the 0-th bit of `a: [u8; 32]` is the most significant bit of `a[0]`, and so on. When `a` and `b` are bit strings, we say `a < b` using the lexicographic ordering. Note this corresponds to the ordering on byte strings, where each byte starting at the 0-th is compared as an integer until an inequality is found, with the shorter input being declared less if no inequality is found.
 
-In this spec, we will specify how to compute the root of a Merkle-Patricia Tree, as well as inclusion proofs of elements. The proofs and hashes are intentionally made compatible with the [PATRICIA](https://github.com/rsc/tmp/blob/b6bdb3d0c98a466099207da2af224c10f20544bf/mpt/DESIGN.md) design.
+In this spec, we will specify how to compute the root of a Merkle-Patricia Tree, as well as inclusion proofs of elements. The proofs and hashes are intentionally made compatible with Russ Cox's [MPT] design.
 
 ## Creating interior nodes
 
@@ -132,10 +132,37 @@ Each test vector has the property that `Inclusion(leaves) = proof` and `MPT(leav
 
 # Non-normative notes
 
-Note that you can efficiently insert a new entry `(k, v)` into a tree if you have all the interior nodes that were created in the process of computing `MPT'`:
+## Memory-Efficient Root Computation
 
-    let S be the set of all nodes that were ever computed in MPT'
-    let m = ToInterior(k, v)
-    let n be the element of S that maximizes r = Similarity(n, m)
-    // if n was a node with a parent (true whenever S is not a singleton), then we kick out the sibling
-    let S' be the subset of S whose prefixes ... TODO
+Russ Cox's [MPT] construction defines the `MPT` function using an imperative algorithm. This algorithm has far better asymptotics than the `MPT` algorithm defined above—O(KN³) versus O(KN), where K is a hash comparison:
+```
+func mpt(list) -> (hash)
+	s = {}
+	for each k, v in list
+		s = reduce(push(s, leaf(k, v)))
+	return stackhash(s)
+
+func leaf(k, v) -> (node)
+	return {key: k, bits: 256, hash: SHA256(k || v)}
+
+func reduce(s) -> (stack)
+	while len(s) >= 3 and overlap(s[-3], s[-2]) > overlap(s[-2], s[-1])
+		s = push(s[:-3], merge(s[-3], s[-2]), s[-1])
+	return s
+
+func stackhash(s) -> (hash)
+	if len(s) == 0
+		return SHA256()
+	while len(s) >= 2
+		s = push(s[:-2], merge(s[-2], s[-1]))
+	return s[-1].hash
+
+func overlap(x, y) -> (bool)
+	return number of bits in shared prefix of x and y (at most min(x.bits, y.bits))
+
+func merge(x, y) -> (node)
+	b = overlap(x, y)
+	return {key: x.key, bits: b, hash: SHA256(x.hash || y.hash || b)}
+```
+
+[MPT]: https://github.com/rsc/tmp/blob/b6bdb3d0c98a466099207da2af224c10f20544bf/mpt/DESIGN.md
