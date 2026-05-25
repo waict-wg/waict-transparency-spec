@@ -108,14 +108,14 @@ We define the verification algorithm for the proof `proof` that the key-value pa
 
 ```
 def VerifyInclusion'(root, node, proof, lastR):
-    if proof.len() == 0: # End of proof
+    if proof.len() == 0: // End of proof
         return root == node.hash
     if proof.len() < 33:
         raise Malformed
         
     let r = proof[0]
     let sibling = proof[1..33]
-    if r >= lastR: # Prefix len must be strictly decreasing
+    if r >= lastR: // Prefix len must be strictly decreasing
         raise Malformed
 
     let prefix' = node.prefix[..r] || 0...0  // pad to 256 bits
