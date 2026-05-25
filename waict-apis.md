@@ -4,7 +4,7 @@
 
 This document describes a set of APIs for a transparency system for web resources. It enables clients fetching web resources, identified by a URL, to be assured that the received web resource has been publicly logged. It also enables website operators (and others) to enumerate the history of a web resource and observe when it changes.
 
-The primary use case is [WAICT](https://docs.google.com/document/d/16-cvBkWYrKlZHXkWRFvKGEifdcMthUfv-LxIbg6bx2o/edit?tab=t.0#heading=h.hqduv7qhbp3k), Web Application Integrity, Consistency and Transparency, which aims to bring stronger transparency and integrity properties to applications delivered over the web in order to support properties like end-to-end encrypted messaging.
+The primary use case is [WAICT](https://blog.cloudflare.com/improving-the-trustworthiness-of-javascript-on-the-web/), Web Application Integrity, Consistency and Transparency, which aims to bring stronger transparency and integrity properties to applications delivered over the web in order to support properties like end-to-end encrypted messaging.
 
 # Glossary
 
@@ -23,9 +23,9 @@ We use the TLS presentation syntax from [RFC 8446](https://www.rfc-editor.org/rf
 
 We use the base64 encoding algorithms described in [RFC 4648](https://www.rfc-editor.org/rfc/rfc4648.html). Specifically we use the standard "base64" encoding and the URL-safe "base64url" encoding.
 
-We use `||` to denote concatenation of bytestrings. Unless otherwise specified, we use the placeholder text `<digest>` to refer to a base64-encoded SHA-256 digest, prefixed by `sha256-`. This makes the digest a valid SRI [`hash-expression`](https://www.w3.org/TR/sri-2/#grammardef-hash-expression).
+We use `||` to denote concatenation of bytestrings.
 
-We use the Prefix Tree data structure from the [key transparency draft specification](https://www.ietf.org/archive/id/draft-keytrans-mcmillion-protocol-02.html#name-prefix-tree). We also use the `PrefixProof` structure for proofs of inclusion and non-inclusion, as well as the structure's associated verification algorithm.
+We use the Merkle Patricia Tree data structure from the [`merkle-patricia-tree.md`](./merkle-patricia-tree.md).
 
 We use the Signed Note data structure from the [C2SP signed note standard](https://github.com/C2SP/C2SP/blob/main/signed-note.md). We use the term "cosignature" as in the standard, to refer to a signature on a signed note.
 
@@ -68,7 +68,7 @@ struct {
   opaque url<1..511>;
 } AssetHost;
 
-/* In an add/update event, the asset hosts can either be changed or unchanged */
+/* In a tree event, the asset hosts can either be changed or unchanged */
 enum { changed(0), unchanged(1) } NewAssetHostsTag;
 struct {
   NewAssetHostsTag type;
@@ -94,11 +94,15 @@ Tree events are exposed to witnesses in _batches_. Every time a witness processe
 
 Entries contain hashes of arbitrary _resources_. The transparency never stores resources directly, only their hashes. The _resource hash_ of the resource `r` is defined to be `SHA-256("waict-rh" || r)`.
 
-The `chain_hash` field of an `ChainNode` encodes the history of the entries associated with a given domain excluding the `entry` field that it lies next to. Specifically, let `ec` be the domain's previous `ChainNode`. Then the `chain_hash` field of a new `ChainNode` is computed as `SHA-256("waict-ch" || cn)` (where `cn` is serialized in its TLS representation).
+The `chain_hash` field of an `ChainNode` encodes the history of the entries associated with a given domain, not including the `ChainNode` that it lives in. Specifically, let `ec` be the domain's previous `ChainNode`. Then the `chain_hash` field of a new `ChainNode` is computed as `SHA-256("waict-ch" || cn)` (where `cn` is serialized in its TLS representation).
 
 The initial chain hash is 32 bytes of 0x00. So, for example, if `e` is the first entry for a domain, then the first `ChainNode` will have the form `ChainNode{entry: e, chain_hash: [0x00; 32]}`.
 
-The `asset_hosts_hash` encodes the asset hosts where resources can be fetched from. It's computed over the comma-separated list of base64-encoded URLs, with no trailing comma. `asset_hosts_hash = SHA-256("waict-ah" || entry1_b64 || "," || entry2_b64 || "," || ...)`.
+The `asset_hosts_hash` encodes the asset hosts where resources can be fetched from. For a given array of asset hosts `AssetHost arr<1..N>`, the hash is computed as follows:
+1. Let `sorted` be `arr` with all its constituent `AssetHost`s sorted lexicographically by their `url` field, ascending.
+2. Then `asset_hosts_hash = SHA-256("waict-ah" || s)` where `s` is the canonical serialization of `sorted`.
+
+The prefix tree represents a mapping from domain name to the latest head of the site history chain. The tree API only permits storing 32-byte keys and values. We define the key corresponding to domain `d` as `SHA-256("waict-kh" || d)`, and the value corresponding to the chain hash of the given `ChainNode`, as defined above.
 
 ## Transparency Service API
 
@@ -146,7 +150,7 @@ The transparency service creates an entry and appends it to the prefix tree. It 
 1. Creates a new `Entry`, `e`, with `time_created` set to the current Unix time in seconds `t`, `resource_hash` set to the decoded given resource hash, `position_in_chain` set to one plus the previous entry's position in the chain, and `asset_hosts_hash` set to `ah`
 1. Sets the value of the leaf equal to an `ChainNode`, with `entry` set to `e`, and `chain_hash` set to `ch`.
 1. Computes a new prefix root given the new leaf
-1. Appends a `TreeEvent` struct to the the sequence of tree events, with `domain` set to the given domain, `new_resource_hash` set to the decoded given resource hash, and `timestamp` set to `t`. If asset hosts are present in the query, then `asset_hosts` is set to have enum type `changed` and containing the given asset hosts. Otherwise, `asset_hosts` is set to have enum type `unchanged`.
+1. Appends a `TreeEvent` struct to the the sequence of tree events, with `domain` set to the given domain, `new_resource_hash` set to the decoded given resource hash, and `timestamp` set to `t`. If asset hosts are present in the query, then `asset_hosts` is set to have enum type `changed` and containing the given asset hosts, sorted ascending lexicographically as bytestrings. Otherwise, `asset_hosts` is set to have enum type `unchanged`.
 1. Waits for cosignatures on the new prefix root or a root that came after it
 1. Returns a `ChainHeadWithProof` with `head` set to the latest `ChainNode` associated with `domain` in the newly cosigned prefix tree, `inc_proof` set to the inclusion proof in that tree, and `signed_prefix_root` set to the signed note for the prefix tree root.
 
@@ -215,11 +219,11 @@ The transparency service MUST store a chain hash of an enrolled domain for at le
 
 ### Get Asset Hosts
 
-* Endpoint: `/asset-hosts/<digest>`
+* Endpoint: `/asset-hosts/sha256-<digest>`
 * Method: GET
 * Returns: An `application/octet-stream` containing the comma-separated list of base64-encoded URLs corresponding to the `hash`.
 
-`<digest>` is a `asset_hosts_hash` (string-formatted same as all digests) inside some `Entry` hosted by the transparency service. Every such value MUST be served at this endpoint.
+`<digest>` is the base64-encoded `asset_hosts_hash` inside some `Entry` hosted by the transparency service. Every such value MUST be served at this endpoint.
 
 This endpoint is similar in function to the [issuers](https://github.com/C2SP/C2SP/blob/main/static-ct-api.md#issuers) endpoint used in Static CT. Sites are not expected to change their asset hosts frequently, but must be free to do so as-needed.
 
@@ -296,9 +300,9 @@ The asset host only need to be able to return a file given its hash.
 
 ## Get Asset
 
-* Endpoint `/fetch/<digest>`
+* Endpoint `/fetch/sha256-<digest>`
 * Method: GET
-* Response: An `octet-stream` containing the resource whose string-formatted SHA-256 hash is `<digest>`
+* Response: An `octet-stream` containing the resource whose base64-encoded SHA-256 hash is `<digest>`
 
 These endpoints are immutable, so asset hosts SHOULD have long caching times.
 
