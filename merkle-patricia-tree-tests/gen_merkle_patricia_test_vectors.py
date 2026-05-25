@@ -66,9 +66,9 @@ def to_interior(k: bytes, v: bytes) -> InteriorNode:
 
 
 def similarity(n: InteriorNode, m: InteriorNode) -> int:
-    l = min(n.prefix_len, m.prefix_len)
-    assert not (l == 256 and n.prefix == m.prefix), "identical length-256 prefixes"
-    result = common_prefix_len(n.prefix, m.prefix, l)
+    length = min(n.prefix_len, m.prefix_len)
+    assert not (length == 256 and n.prefix == m.prefix), "identical length-256 prefixes"
+    result = common_prefix_len(n.prefix, m.prefix, length)
     assert result <= 255
     return result
 
@@ -538,8 +538,8 @@ def generate_bad_verifier_vectors(rng: random.Random) -> list:
     pairs_single = [(k, v)]
     valid_proof, _ = compute_root_and_inclusion(0, pairs_single)
     zero_root = b"\x00" * 32
-    assert bad_verify_inclusion(zero_root, k, v, valid_proof) == False
-    assert verify_inclusion(zero_root, k, v, valid_proof) == False
+    assert not bad_verify_inclusion(zero_root, k, v, valid_proof)
+    assert not verify_inclusion(zero_root, k, v, valid_proof)
     vectors.append(
         {
             "label": "root_mismatch",
