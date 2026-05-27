@@ -169,9 +169,9 @@ def verify_inclusion(root: bytes, k: bytes, v: bytes, proof: bytes) -> bool:
     Returns False if the proof is structurally valid but doesn't match.
     Raises VerificationError if the proof is malformed.
     """
-    if len(proof) < 41 or proof[:9] != b"mptproof\x01":
+    if len(proof) < 9 + 32 or proof[:9] != b"mptproof\x01":
         raise VerificationError("invalid proof header")
-    if proof[9:41] != v:
+    if proof[9 : 9 + 32] != v:
         return False
     node = to_interior(k, v)
     return _verify_inclusion_helper(root, node, proof[9 + 32 :], 256)
@@ -449,7 +449,7 @@ def generate_bad_verifier_vectors(rng: random.Random) -> list:
     # value. The bad verifier skips it without comparing to v.
     fake_v = random_bytestring(rng)
     assert fake_v != v1
-    bad_proof = valid_proof[:9] + fake_v + valid_proof[41:]
+    bad_proof = valid_proof[:9] + fake_v + valid_proof[9 + 32 :]
     assert bad_verify_inclusion(root, k1, v1, bad_proof)
     assert not verify_inclusion(root, k1, v1, bad_proof)
     vectors.append(

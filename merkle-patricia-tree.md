@@ -129,8 +129,10 @@ def VerifyInclusion'(root, node, proof, lastR):
     return VerifyInclusion'(root, node', proof[33..], r)
 
 def VerifyInclusion(root, k, v, proof):
+    if proof.len() < 9+32:
+        raise Malformed
     if proof[..9] != ("mptproof" || 0x01):
-        raise Malformed;
+        raise Malformed
     if proof[9..9+32] != v:
         return false
         
