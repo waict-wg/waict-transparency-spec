@@ -150,6 +150,7 @@ Known-answer tests can be found in `merkle-patricia-tree-tests/`. There are two 
 ## Root computation tests
 
 The file `mpt_root_kats.jsonl` has a JSON object on each line. Each object has the following keys:
+
 * `label` — Represents the name of this test vector
 * `root` — A base64-encoded length-32 bytestring
 * `leaves` — A list containing any number of objects containing `key` and `value`, both base64-encoded length-32 bytestrings
@@ -159,6 +160,7 @@ Each test vector has the property that `MPT(leaves) = root`
 ## Inclusion tests
 
 The file `mpt_inclusion_kats.jsonl` has a JSON object on each line. Each object has the following keys:
+
 * `label` — Represents the name of this test vector
 * `root` — A base64-encoded length-32 bytestring
 * `proof` — A base64-encoded length-32 bytestring
@@ -166,6 +168,17 @@ The file `mpt_inclusion_kats.jsonl` has a JSON object on each line. Each object 
 * `leaves` — A list containing any number of objects containing `key` and `value`, both base64-encoded length-32 bytestrings
 
 Each test vector has the property that `Inclusion(leaves) = proof` and `MPT(leaves) = root`.
+
+## Negative inclusion tests 
+
+The file `mpt_invalid_inclusion_kats.jsonl` contains NEGATIVE inclusion tests, i.e., inputs that should fail when passed to a correct implementation of the `VerifyInclusion` algorithm. Each line of the file has a JSON object. Each object has the following keys:
+
+* `label` — Represents the name of this test vector
+* `exploit` — A human-readable description of the flaw the vector exercises in a bad verifier
+* `root` — A base64-encoded length-32 bytestring
+* `key` — A base64-encoded length-32 bytestring
+* `value` — A base64-encoded length-32 bytestring
+* `proof` — A base64-encoded bytestring
 
 # Non-normative notes
 

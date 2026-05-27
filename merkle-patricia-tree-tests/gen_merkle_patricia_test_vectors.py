@@ -10,7 +10,7 @@ import random
 SEED = b"waict-v1-mpt-kats"
 ROOT_KAT_FILENAME = "mpt_root_kats.jsonl"
 INCLUSION_KAT_FILENAME = "mpt_inclusion_kats.jsonl"
-BAD_VERIFIER_KAT_FILENAME = "mpt_bad_verifier_kats.jsonl"
+INVALID_INCLUSION_KAT_FILENAME = "mpt_invalid_inclusion_kats.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -656,11 +656,11 @@ def main():
         f"Wrote {len(inclusion_vectors)} inclusion test vectors to {INCLUSION_KAT_FILENAME}"
     )
 
-    with open(BAD_VERIFIER_KAT_FILENAME, "w") as f:
+    with open(INVALID_INCLUSION_KAT_FILENAME, "w") as f:
         for vec in bad_vectors:
             f.write(json.dumps(vec) + "\n")
     print(
-        f"Wrote {len(bad_vectors)} bad-verifier exploit vectors to {BAD_VERIFIER_KAT_FILENAME}"
+        f"Wrote {len(bad_vectors)} bad-verifier exploit vectors to {INVALID_INCLUSION_KAT_FILENAME}"
     )
 
 
