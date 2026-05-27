@@ -44,7 +44,8 @@ We define our helper function `MPT'` over a set of interior nodes as follows:
 
     // Precondition: no two ni, nj have identical prefixes
     def MPT'(S = {n1, n2, ..., nk}):
-        find indices i ≠ j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
+        find indices i ≠ j that maximizes r = Similarity(ni, nj)
+          (note this is not nec unique; also Similarity is symmetric so order doesn't matter)
         let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
         let children_hashes = if ni.prefix < nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
         let hash' = H(children_hashes || r)
@@ -71,7 +72,8 @@ We define the inclusion proof of the `k`-th element in a list `L` of interior no
     // Precondition: 1 ≤ k ≤ N
     // Precondition: no two ni, nj have identical prefixes
     def ProveInclusion'(k, L = [n1, n2, ..., nN]):
-        find indices i < j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
+        find indices i < j that maximizes r = Similarity(ni, nj)
+          (note this is not nec unique; also Similarity is symmetric so order doesn't matter)
 
         // Merge ni and nj into n', just like in MPT'
         let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
