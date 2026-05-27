@@ -6,11 +6,11 @@ import hashlib
 import itertools
 import json
 import random
-import sys
 
 SEED = b"waict-v1-mpt-kats"
 ROOT_KAT_FILENAME = "mpt_root_kats.jsonl"
 INCLUSION_KAT_FILENAME = "mpt_inclusion_kats.jsonl"
+INVALID_INCLUSION_KAT_FILENAME = "mpt_invalid_inclusion_kats.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -66,9 +66,9 @@ def to_interior(k: bytes, v: bytes) -> InteriorNode:
 
 
 def similarity(n: InteriorNode, m: InteriorNode) -> int:
-    l = min(n.prefix_len, m.prefix_len)
-    assert not (l == 256 and n.prefix == m.prefix), "identical length-256 prefixes"
-    result = common_prefix_len(n.prefix, m.prefix, l)
+    length = min(n.prefix_len, m.prefix_len)
+    assert not (length == 256 and n.prefix == m.prefix), "identical length-256 prefixes"
+    result = common_prefix_len(n.prefix, m.prefix, length)
     assert result <= 255
     return result
 
@@ -149,6 +149,95 @@ def compute_root_and_inclusion_helper(target_idx: int, nodes: list) -> tuple:
 
     rest_proof, root = compute_root_and_inclusion_helper(new_target, new_nodes)
     return (proof_segment + rest_proof, root)
+
+
+# ---------------------------------------------------------------------------
+# Correct inclusion verification
+# ---------------------------------------------------------------------------
+
+
+class VerificationError(Exception):
+    """Raised when a proof is structurally malformed."""
+
+    pass
+
+
+def verify_inclusion(root: bytes, k: bytes, v: bytes, proof: bytes) -> bool:
+    """
+    Correct inclusion verifier matching the spec's VerifyInclusion.
+    Returns True if (k, v) is proven to be in the tree with the given root.
+    Returns False if the proof is structurally valid but doesn't match.
+    Raises VerificationError if the proof is malformed.
+    """
+    if len(proof) < 9 + 32 or proof[:9] != b"mptproof\x01":
+        raise VerificationError("invalid proof header")
+    if proof[9 : 9 + 32] != v:
+        return False
+    node = to_interior(k, v)
+    return _verify_inclusion_helper(root, node, proof[9 + 32 :], 256)
+
+
+def _verify_inclusion_helper(
+    root: bytes, node: InteriorNode, proof: bytes, last_r: int
+) -> bool:
+    if len(proof) == 0:
+        return root == node.hash
+    if len(proof) < 33:
+        raise VerificationError("incomplete proof segment")
+
+    r = proof[0]
+    sibling = proof[1:33]
+    if r >= last_r:
+        raise VerificationError(f"non-decreasing r: {r} >= {last_r}")
+
+    prefix_new = prefix_truncate(node.prefix, r)
+    if bit_at(node.prefix, r) == 0:
+        children_hashes = node.hash + sibling
+    else:
+        children_hashes = sibling + node.hash
+    hash_new = sha256(children_hashes + bytes([r]))
+    node_new = InteriorNode(prefix=prefix_new, prefix_len=r, hash_val=hash_new)
+    return _verify_inclusion_helper(root, node_new, proof[33:], r)
+
+
+# ---------------------------------------------------------------------------
+# Bad (deliberately weak) inclusion verification
+# ---------------------------------------------------------------------------
+
+
+def bad_verify_inclusion(root: bytes, k: bytes, v: bytes, proof: bytes) -> bool:
+    """
+    Deliberately weak inclusion verifier with the following flaws:
+    1. Does not check the magic header (just skips 9 bytes)
+    2. Does not verify the embedded value matches v (just skips 32 bytes)
+    3. Treats any remainder < 33 bytes as end-of-proof (instead of
+       raising an error for 1-32 trailing bytes)
+    4. Does not check that r values are strictly decreasing
+    """
+    # BAD: skip header without checking its value
+    proof = proof[9:]
+    # BAD: skip embedded value without verifying it matches v
+    proof = proof[32:]
+    node = to_interior(k, v)
+    return _bad_verify_inclusion_helper(root, node, proof)
+
+
+def _bad_verify_inclusion_helper(root: bytes, node: InteriorNode, proof: bytes) -> bool:
+    # BAD: treats any remainder < 33 as valid end-of-proof
+    # (should only accept exactly 0 remaining bytes)
+    if len(proof) < 33:
+        return root == node.hash
+    r = proof[0]
+    sibling = proof[1:33]
+    # BAD: no check that r < last_r
+    prefix_new = prefix_truncate(node.prefix, r)
+    if bit_at(node.prefix, r) == 0:
+        children_hashes = node.hash + sibling
+    else:
+        children_hashes = sibling + node.hash
+    hash_new = sha256(children_hashes + bytes([r]))
+    node_new = InteriorNode(prefix=prefix_new, prefix_len=r, hash_val=hash_new)
+    return _bad_verify_inclusion_helper(root, node_new, proof[33:])
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +359,23 @@ def run_property_tests():
         test_permutation_invariance(pairs, rng, num_perms=30)
         print(f"  size {size}: root + permutation invariance OK")
 
+    # Verify that generated proofs pass the correct verifier
+    rng2 = random.Random(b"mpt-verification-tests")
+    for size in range(1, 8):
+        pairs = [
+            (random_bytestring(rng2), random_bytestring(rng2)) for _ in range(size)
+        ]
+        for idx in range(size):
+            proof, root = compute_root_and_inclusion(idx, pairs)
+            k, v = pairs[idx]
+            assert verify_inclusion(root, k, v, proof), (
+                f"valid proof failed verify_inclusion for size={size} idx={idx}"
+            )
+            assert bad_verify_inclusion(root, k, v, proof), (
+                f"valid proof failed bad_verify_inclusion for size={size} idx={idx}"
+            )
+    print("  verify_inclusion on generated proofs: OK")
+
     print("All property tests passed.")
 
 
@@ -296,6 +402,156 @@ def make_inclusion_vector(pairs: list, target_idx: int, label: str) -> dict:
         "target_index": target_idx,
         "proof": b64(proof),
     }
+
+
+def generate_bad_verifier_vectors(rng: random.Random) -> list:
+    """
+    Generate test vectors that pass bad_verify_inclusion but fail
+    verify_inclusion. Each vector exploits a specific missing check.
+    """
+    vectors = []
+
+    # Build a valid proof to use as a starting point for exploits 1-3
+    k1 = random_bytestring(rng)
+    v1 = random_bytestring(rng)
+    k2 = random_bytestring(rng)
+    v2 = random_bytestring(rng)
+    pairs = [(k1, v1), (k2, v2)]
+    valid_proof, root = compute_root_and_inclusion(0, pairs)
+
+    # Sanity: the valid proof passes both verifiers
+    assert verify_inclusion(root, k1, v1, valid_proof)
+    assert bad_verify_inclusion(root, k1, v1, valid_proof)
+
+    # --- Exploit 1: Wrong magic header ---
+    # Replace the 9-byte header with garbage. The bad verifier blindly skips
+    # past it, so the rest of the proof still verifies.
+    bad_proof = b"XXXXXXXXX" + valid_proof[9:]
+    assert bad_verify_inclusion(root, k1, v1, bad_proof)
+    try:
+        verify_inclusion(root, k1, v1, bad_proof)
+        assert False, "correct verifier should have raised"
+    except VerificationError:
+        pass
+    vectors.append(
+        {
+            "label": "wrong_magic_header",
+            "exploit": "Header bytes replaced with garbage; bad verifier skips without checking",
+            "root": b64(root),
+            "key": b64(k1),
+            "value": b64(v1),
+            "proof": b64(bad_proof),
+        }
+    )
+
+    # --- Exploit 2: Wrong embedded value ---
+    # Replace the 32-byte value embedded after the header with a different
+    # value. The bad verifier skips it without comparing to v.
+    fake_v = random_bytestring(rng)
+    assert fake_v != v1
+    bad_proof = valid_proof[:9] + fake_v + valid_proof[9 + 32 :]
+    assert bad_verify_inclusion(root, k1, v1, bad_proof)
+    assert not verify_inclusion(root, k1, v1, bad_proof)
+    vectors.append(
+        {
+            "label": "wrong_embedded_value",
+            "exploit": "Embedded value replaced with random bytes; bad verifier skips value check",
+            "root": b64(root),
+            "key": b64(k1),
+            "value": b64(v1),
+            "proof": b64(bad_proof),
+        }
+    )
+
+    # --- Exploit 3: Trailing junk bytes ---
+    # Append 16 bytes of junk after the valid proof. After processing all
+    # real segments, 16 bytes remain. The bad verifier treats < 33 remaining
+    # as end-of-proof; the correct verifier raises Malformed.
+    junk = bytes(rng.getrandbits(8) for _ in range(16))
+    bad_proof = valid_proof + junk
+    assert bad_verify_inclusion(root, k1, v1, bad_proof)
+    try:
+        verify_inclusion(root, k1, v1, bad_proof)
+        assert False, "correct verifier should have raised"
+    except VerificationError:
+        pass
+    vectors.append(
+        {
+            "label": "trailing_junk_bytes",
+            "exploit": "16 junk bytes appended; bad verifier silently ignores trailing remainder < 33 bytes",
+            "root": b64(root),
+            "key": b64(k1),
+            "value": b64(v1),
+            "proof": b64(bad_proof),
+        }
+    )
+
+    # --- Exploit 4: Non-monotonic r values ---
+    # Construct a proof from scratch where r increases (50 → 100).
+    # The bad verifier doesn't check monotonicity.
+    k = random_bytestring(rng)
+    v = random_bytestring(rng)
+    node = to_interior(k, v)
+
+    r1 = 50
+    sibling1 = random_bytestring(rng)
+    if bit_at(node.prefix, r1) == 0:
+        ch = node.hash + sibling1
+    else:
+        ch = sibling1 + node.hash
+    hash1 = sha256(ch + bytes([r1]))
+    node1 = InteriorNode(
+        prefix=prefix_truncate(node.prefix, r1), prefix_len=r1, hash_val=hash1
+    )
+
+    r2 = 100  # r2 > r1: non-monotonic!
+    sibling2 = random_bytestring(rng)
+    if bit_at(node1.prefix, r2) == 0:
+        ch = node1.hash + sibling2
+    else:
+        ch = sibling2 + node1.hash
+    crafted_root = sha256(ch + bytes([r2]))
+
+    bad_proof = b"mptproof\x01" + v + bytes([r1]) + sibling1 + bytes([r2]) + sibling2
+    assert bad_verify_inclusion(crafted_root, k, v, bad_proof)
+    try:
+        verify_inclusion(crafted_root, k, v, bad_proof)
+        assert False, "correct verifier should have raised"
+    except VerificationError:
+        pass
+    vectors.append(
+        {
+            "label": "non_monotonic_r",
+            "exploit": "r values go 50 then 100 (increasing); bad verifier skips monotonicity check",
+            "root": b64(crafted_root),
+            "key": b64(k),
+            "value": b64(v),
+            "proof": b64(bad_proof),
+        }
+    )
+
+    # --- Exploit 5: Root mismatch ---
+    # A structurally valid proof, but the root is all zeros (doesn't match
+    # the computed root). Both verifiers reject this.
+    k = random_bytestring(rng)
+    v = random_bytestring(rng)
+    pairs_single = [(k, v)]
+    valid_proof, _ = compute_root_and_inclusion(0, pairs_single)
+    zero_root = b"\x00" * 32
+    assert not bad_verify_inclusion(zero_root, k, v, valid_proof)
+    assert not verify_inclusion(zero_root, k, v, valid_proof)
+    vectors.append(
+        {
+            "label": "root_mismatch",
+            "exploit": "Valid proof structure but root is all zeros; computed root does not match",
+            "root": b64(zero_root),
+            "key": b64(k),
+            "value": b64(v),
+            "proof": b64(valid_proof),
+        }
+    )
+
+    return vectors
 
 
 def build_edge_case_pairs(rng: random.Random) -> list:
@@ -383,6 +639,10 @@ def main():
                 make_inclusion_vector(pairs, idx, f"{label}_idx{idx}")
             )
 
+    # --- Bad verifier exploit vectors ---
+    bad_rng = random.Random(b"waict-v1-bad-verifier-kats")
+    bad_vectors = generate_bad_verifier_vectors(bad_rng)
+
     # --- Write output ---
     with open(ROOT_KAT_FILENAME, "w") as f:
         for vec in root_vectors:
@@ -394,6 +654,13 @@ def main():
             f.write(json.dumps(vec) + "\n")
     print(
         f"Wrote {len(inclusion_vectors)} inclusion test vectors to {INCLUSION_KAT_FILENAME}"
+    )
+
+    with open(INVALID_INCLUSION_KAT_FILENAME, "w") as f:
+        for vec in bad_vectors:
+            f.write(json.dumps(vec) + "\n")
+    print(
+        f"Wrote {len(bad_vectors)} bad-verifier exploit vectors to {INVALID_INCLUSION_KAT_FILENAME}"
     )
 
 

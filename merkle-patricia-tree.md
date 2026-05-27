@@ -44,7 +44,8 @@ We define our helper function `MPT'` over a set of interior nodes as follows:
 
     // Precondition: no two ni, nj have identical prefixes
     def MPT'(S = {n1, n2, ..., nk}):
-        find indices i ≠ j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
+        find indices i ≠ j that maximizes r = Similarity(ni, nj)
+          (note this is not nec unique; also Similarity is symmetric so order doesn't matter)
         let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
         let children_hashes = if ni.prefix < nj.prefix: ni.hash || nj.hash, else: nj.hash || ni.hash
         let hash' = H(children_hashes || r)
@@ -62,16 +63,17 @@ Finally, we define our top-level function:
 
 We define the inclusion proof of the `k`-th element in a list `L` of interior nodes as follows:
 
-    def Inclusion'(k, []):
+    def ProveInclusion'(k, []):
         raise Error("Cannot prove inclusion in an empty list")
 
-    def Inclusion'(1, [n1]):
+    def ProveInclusion'(1, [n1]):
         return ""
 
     // Precondition: 1 ≤ k ≤ N
     // Precondition: no two ni, nj have identical prefixes
-    def Inclusion'(k, L = [n1, n2, ..., nN]):
-        find indices i < j that maximizes r = Similarity(ni, nj) (note this is not nec unique)
+    def ProveInclusion'(k, L = [n1, n2, ..., nN]):
+        find indices i < j that maximizes r = Similarity(ni, nj)
+          (note this is not nec unique; also Similarity is symmetric so order doesn't matter)
 
         // Merge ni and nj into n', just like in MPT'
         let prefix' = ni.prefix[..r] || 0...0  // pad to 256 bits
@@ -95,14 +97,51 @@ We define the inclusion proof of the `k`-th element in a list `L` of interior no
                 k - 1
 
         // Recurse
-        return proof_segment || Inclusion'(k', L')
+        return proof_segment || ProveInclusion'(k', L')
 
 Finally we define the top-level function that is given an index and a list of key-value pairs:
 
     // Precondition: 1 ≤ k ≤ len(L)
-    def Inclusion(k, L):
+    def ProveInclusion(k, L):
         let (_, val) = L[k]
-        return "mptproof" || 0x01 || val || Inclusion'(k, L.map(ToInterior))
+        return "mptproof" || 0x01 || val || ProveInclusion'(k, L.map(ToInterior))
+
+We define the verification algorithm for the proof `proof` that the key-value pair `k,v` appear in the tree with root hash `root`. This function returns true when the proof is valid, returns false when invalid, and raises a `Malformed` error when the proof is malformed.
+
+```
+def VerifyInclusion'(root, node, proof, lastR):
+    if proof.len() == 0: // End of proof
+        return root == node.hash
+    if proof.len() < 33:
+        raise Malformed
+        
+    let r = proof[0]
+    let sibling = proof[1..33]
+    if r >= lastR: // Prefix len must be strictly decreasing
+        raise Malformed
+
+    let prefix' = node.prefix[..r] || 0...0  // pad to 256 bits
+    let children_hashes = if node.prefix[r] == 0:
+        node.hash || sibling
+      else:
+        sibling || node.hash
+    let hash' = H(children_hashes || r)
+    let node' = {prefix: prefix', prefix_len: r, hash: hash'}
+
+    return VerifyInclusion'(root, node', proof[33..], r)
+
+def VerifyInclusion(root, k, v, proof):
+    if proof.len() < 9+32:
+        raise Malformed
+    if proof[..9] != ("mptproof" || 0x01):
+        raise Malformed
+    if proof[9..9+32] != v:
+        return false
+        
+    let proof' = proof[9+32..]
+    let node = ToInterior(k, v)
+    return VerifyInclusion'(root, node, proof', 256)
+```
 
 TODO: Specify non-inclusion proofs. Make sure to handle the empty tree case.  
 
@@ -113,22 +152,37 @@ Known-answer tests can be found in `merkle-patricia-tree-tests/`. There are two 
 ## Root computation tests
 
 The file `mpt_root_kats.jsonl` has a JSON object on each line. Each object has the following keys:
+
 * `label` — Represents the name of this test vector
 * `root` — A base64-encoded length-32 bytestring
 * `leaves` — A list containing any number of objects containing `key` and `value`, both base64-encoded length-32 bytestrings
 
-Each test vector has the property that `MPT(leaves) = root`
+Each test vector has the property that `MPT(leaves) == root`
 
 ## Inclusion tests
 
-The file `mpt_inclusion_kats.jsonl` has a JSON object on each line. Each object has the following keys:
+The file `mpt_inclusion_kats.jsonl` contains inclusion proofs. Each line has a JSON object. Each object has the following keys:
+
 * `label` — Represents the name of this test vector
 * `root` — A base64-encoded length-32 bytestring
 * `proof` — A base64-encoded length-32 bytestring
-* `target_index` — An integer in the range `[0, len(leaves))`
 * `leaves` — A list containing any number of objects containing `key` and `value`, both base64-encoded length-32 bytestrings
+* `target_index` — An integer in the range `[0, len(leaves))`
 
-Each test vector has the property that `Inclusion(leaves) = proof` and `MPT(leaves) = root`.
+Each test vector has the property that `ProveInclusion(target_index, leaves) == proof` and `MPT(leaves) == root`. Further, `VerifyInclusion(root, key, value, proof) == true`, where `(key, value) = leaves[target_index]`.
+
+## Negative inclusion tests 
+
+The file `mpt_invalid_inclusion_kats.jsonl` contains NEGATIVE inclusion tests, i.e., inputs that should fail when passed to a correct implementation of the `VerifyInclusion` algorithm. Each line of the file has a JSON object. Each object has the following keys:
+
+* `label` — Represents the name of this test vector
+* `exploit` — A human-readable string
+* `root` — A base64-encoded length-32 bytestring
+* `key` — A base64-encoded length-32 bytestring
+* `value` — A base64-encoded length-32 bytestring
+* `proof` — A base64-encoded bytestring
+
+Each test vector has the property that `VerifyInclusion(root, key, value, proof)` fails (this can mean returning false, raising an error, or whatever the implementer chooses to indicate failure as). The `exploit` field of each test vector describes the test vector as well as the flaw in a verifier that would cause this vector to pass.
 
 # Non-normative notes
 
