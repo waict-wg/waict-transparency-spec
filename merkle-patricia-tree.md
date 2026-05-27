@@ -157,30 +157,32 @@ The file `mpt_root_kats.jsonl` has a JSON object on each line. Each object has t
 * `root` — A base64-encoded length-32 bytestring
 * `leaves` — A list containing any number of objects containing `key` and `value`, both base64-encoded length-32 bytestrings
 
-Each test vector has the property that `MPT(leaves) = root`
+Each test vector has the property that `MPT(leaves) == root`
 
 ## Inclusion tests
 
-The file `mpt_inclusion_kats.jsonl` has a JSON object on each line. Each object has the following keys:
+The file `mpt_inclusion_kats.jsonl` contains inclusion proofs. Each line has a JSON object. Each object has the following keys:
 
 * `label` — Represents the name of this test vector
 * `root` — A base64-encoded length-32 bytestring
 * `proof` — A base64-encoded length-32 bytestring
-* `target_index` — An integer in the range `[0, len(leaves))`
 * `leaves` — A list containing any number of objects containing `key` and `value`, both base64-encoded length-32 bytestrings
+* `target_index` — An integer in the range `[0, len(leaves))`
 
-Each test vector has the property that `Inclusion(leaves) = proof` and `MPT(leaves) = root`.
+Each test vector has the property that `ProveInclusion(target_index, leaves) == proof` and `MPT(leaves) == root`. Further, `VerifyInclusion(root, key, value, proof) == true`, where `(key, value) = leaves[target_index]`.
 
 ## Negative inclusion tests 
 
 The file `mpt_invalid_inclusion_kats.jsonl` contains NEGATIVE inclusion tests, i.e., inputs that should fail when passed to a correct implementation of the `VerifyInclusion` algorithm. Each line of the file has a JSON object. Each object has the following keys:
 
 * `label` — Represents the name of this test vector
-* `exploit` — A human-readable description of the flaw the vector exercises in a bad verifier
+* `exploit` — A human-readable string
 * `root` — A base64-encoded length-32 bytestring
 * `key` — A base64-encoded length-32 bytestring
 * `value` — A base64-encoded length-32 bytestring
 * `proof` — A base64-encoded bytestring
+
+Each test vector has the property that `VerifyInclusion(root, key, value, proof)` fails (this can mean returning false, raising an error, or whatever the implementer chooses to indicate failure as). The `exploit` field of each test vector describes the test vector as well as the flaw in a verifier that would cause this vector to pass.
 
 # Non-normative notes
 
